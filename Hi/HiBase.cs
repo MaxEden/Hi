@@ -30,6 +30,7 @@ namespace Hi
         }
 
         private DateTimeOffset _lastHeartbeat;
+        private int            _heartbeatId = -5;
 
         private protected void ListenTcpStreams(TcpClient client)
         {
@@ -39,12 +40,7 @@ namespace Hi
             {
                 while (client.Connected)
                 {
-                    if (DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
-                    {
-                        _lastHeartbeat = DateTimeOffset.Now;
-                        Log?.Invoke($"[{Side}] heartbeat sent");
-                        _msgs.Enqueue(new Request(null, -5, Side));
-                    }
+                    Heartbeat();
 
                     bool wait = true;
                     while (_msgs.TryDequeue(out var request))
@@ -66,11 +62,7 @@ namespace Hi
                         int id = ReadInt(stream);
                         var data = ReadString(stream);
 
-                        if (id == -5)
-                        {
-                            Log?.Invoke($"[{Side}] heartbeat received");
-                            continue;
-                        }
+                        if (id == _heartbeatId) continue;
 
                         Log?.Invoke($"[{Side}] read {data}");
 
@@ -106,6 +98,16 @@ namespace Hi
                 stream.Close();
                 client.Close();
                 IsConnected = false;
+            }
+        }
+
+        private void Heartbeat()
+        {
+            if (DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
+            {
+                _lastHeartbeat = DateTimeOffset.Now;
+                //Log?.Invoke($"[{Side}] heartbeat sent");
+                _msgs.Enqueue(new Request(null, _heartbeatId, Side));
             }
         }
 
