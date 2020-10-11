@@ -63,7 +63,7 @@ namespace Hi
             //==============
             _tcp = new TcpClient();
             _tcp.Client.NoDelay = true;
-            _tcp.Client.SendTimeout = 1000;
+            _tcp.Client.SendTimeout = HiConst.SendTimeout;
             _tcp.Connect(_serverEndPointTcp);
             if (!_tcp.Connected) return false;
 

@@ -20,18 +20,32 @@ namespace Hi
         private readonly ConcurrentDictionary<int, Request> _busy = new ConcurrentDictionary<int, Request>();
         private readonly ConcurrentQueue<Request>           _done = new ConcurrentQueue<Request>();
 
+        public Action<string>       Log;
+        public Func<string, string> Receive;
+        public bool                 IsConnected { get; protected set; }
+
         internal HiBase(Side side)
         {
             Side = side;
         }
 
+        private DateTimeOffset _lastHeartbeat;
+
         private protected void ListenTcpStreams(TcpClient client)
         {
+            _lastHeartbeat = DateTimeOffset.Now;
             var stream = client.GetStream();
             try
             {
                 while (client.Connected)
                 {
+                    if (DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
+                    {
+                        _lastHeartbeat = DateTimeOffset.Now;
+                        Log?.Invoke($"[{Side}] heartbeat sent");
+                        _msgs.Enqueue(new Request(null, -5, Side));
+                    }
+
                     bool wait = true;
                     while (_msgs.TryDequeue(out var request))
                     {
@@ -41,7 +55,7 @@ namespace Hi
                         WriteInt(stream, request.Id);
                         WriteString(stream, request.Data.Msg);
 
-                        Console.WriteLine($"[{Side}] sent {request.Data.Msg}");
+                        Log?.Invoke($"[{Side}] sent {request.Data.Msg}");
 
                         wait = false;
                     }
@@ -52,7 +66,13 @@ namespace Hi
                         int id = ReadInt(stream);
                         var data = ReadString(stream);
 
-                        Console.WriteLine($"[{Side}] read {data}");
+                        if (id == -5)
+                        {
+                            Log?.Invoke($"[{Side}] heartbeat received");
+                            continue;
+                        }
+
+                        Log?.Invoke($"[{Side}] read {data}");
 
                         if (fromSide == Side)
                         {
@@ -72,9 +92,14 @@ namespace Hi
 
                     if (wait)
                     {
-                        Thread.Sleep(100);
+                        Thread.Sleep(HiConst.SendDelay);
                     }
                 }
+            }
+            catch (Exception exception)
+            {
+                Log?.Invoke(exception.ToString());
+                Log?.Invoke($"[{Side}] Tcp disconnected");
             }
             finally
             {
@@ -130,7 +155,7 @@ namespace Hi
             int bufferSize = ReadInt(stream);
             if (bufferSize == -1) return null;
             if (bufferSize == 0) return "";
-            
+
             byte[] buffer = new byte[bufferSize];
             stream.Read(buffer, 0, buffer.Length);
             var value = Encoding.UTF8.GetString(buffer);
@@ -150,24 +175,22 @@ namespace Hi
                 WriteInt(stream, -1);
                 return;
             }
-        
+
             if (str == "")
             {
                 WriteInt(stream, 0);
                 return;
             }
-            
+
             var buffer = Encoding.UTF8.GetBytes(str);
             WriteInt(stream, buffer.Length);
             stream.Write(buffer, 0, buffer.Length);
         }
 
-        public Func<string, string> Receive;
-
         public async Task<ResponseData> Send(string msg)
         {
-            if(!IsConnected) return new ResponseData();
-            
+            if (!IsConnected) return new ResponseData();
+
             Request request;
             lock (_syncRoot)
             {
@@ -183,7 +206,5 @@ namespace Hi
             var result = await request;
             return result.Data;
         }
-
-        public bool IsConnected { get; set; }
     }
 }

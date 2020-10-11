@@ -46,7 +46,7 @@ namespace Hi
                 }
                 catch (Exception exception)
                 {
-                    Console.WriteLine(exception);
+                    Log?.Invoke(exception.ToString());
                     _udp.Dispose();
                     _udp = new UdpClient(_udpEndpoint);
                 }
@@ -58,12 +58,13 @@ namespace Hi
             var clientEndPoint = new IPEndPoint(IPAddress.Any, port);
             _tcp = new TcpListener(clientEndPoint);
             _tcp.Server.NoDelay = true;
-            _tcp.Server.SendTimeout = 1000;
+            _tcp.Server.SendTimeout = HiConst.SendTimeout;
             _tcp.Start();
 
             while (true)
             {
                 TcpClient client = _tcp.AcceptTcpClient();
+                Log?.Invoke("Client connected");
                 IsConnected = true;
                 ListenTcpStreams(client);
             }

@@ -21,8 +21,15 @@ namespace HiClientApp
         static async void Start()
         {
             Console.WriteLine("Hello World!");
+            
             var client = new HiClient();
             client.Receive = Receive;
+            client.Log = s => {
+                Console.ForegroundColor = ConsoleColor.DarkCyan;
+                Console.WriteLine(s);
+                Console.ResetColor();
+            };
+            
             var isConnected = await client.Connect("DrawBoard");
 
             if (!isConnected)

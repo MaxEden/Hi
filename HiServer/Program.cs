@@ -20,8 +20,16 @@ namespace HiServerApp
             public void Start()
             {
                 Console.WriteLine("Hello World!");
+                
                 _server = new Hi.HiServer();
                 _server.Receive = Receive;
+                _server.Log = s =>
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkCyan;
+                    Console.WriteLine(s);
+                    Console.ResetColor();
+                };
+                
                 _server.Open("DrawBoard");
             }
 
