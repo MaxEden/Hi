@@ -2,7 +2,9 @@
 {
     public class HiConst
     {
-        public const  int UdpPort = 5151;
+        public static int UdpTimeout => 1000;
+        public static int WatchPeriod = 10;
+        public static int UdpPort     = 5151;
         public static int TcpPort => UdpPort + 1;
     }
 }

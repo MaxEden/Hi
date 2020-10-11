@@ -40,7 +40,7 @@ namespace Hi
 
                     if (password == _name)
                     {
-                        var responseData = Encoding.ASCII.GetBytes(password + "!!!");
+                        var responseData = Encoding.ASCII.GetBytes(password);
                         _udp.Send(responseData, responseData.Length, clientEndPoint);
                     }
                 }

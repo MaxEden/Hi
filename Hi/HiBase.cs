@@ -80,14 +80,16 @@ namespace Hi
             {
                 stream.Close();
                 client.Close();
+                IsConnected = false;
             }
         }
 
         protected void StartThread(Action action)
         {
-            var threadStart = new ThreadStart(action);
-            var thread = new Thread(threadStart);
-            thread.Start();
+            ThreadPool.QueueUserWorkItem(p => action());
+            // var threadStart = new ThreadStart(action);
+            // var thread = new Thread(threadStart);
+            // thread.Start();
         }
 
         public bool ManualMessagePull { get; set; }
@@ -164,6 +166,8 @@ namespace Hi
 
         public async Task<ResponseData> Send(string msg)
         {
+            if(!IsConnected) return new ResponseData();
+            
             Request request;
             lock (_syncRoot)
             {
