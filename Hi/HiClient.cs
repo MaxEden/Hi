@@ -43,35 +43,44 @@ namespace Hi
         {
             var name = _name;
 
-            using var udp = new UdpClient {EnableBroadcast = true};
+            var udp = new UdpClient {EnableBroadcast = true};
             var ip = new IPEndPoint(IPAddress.Broadcast, HiConst.UdpPort);
+            
+            try
+            {
+                byte[] bytes = Encoding.ASCII.GetBytes(name);
+                int size = await udp.SendAsync(bytes, bytes.Length, ip);
 
-            byte[] bytes = Encoding.ASCII.GetBytes(name);
-            int size = await udp.SendAsync(bytes, bytes.Length, ip);
+                var receiveTask = udp.ReceiveAsync();
+                if (!receiveTask.Wait(HiConst.UdpTimeout)) return false;
 
-            var receiveTask = udp.ReceiveAsync();
-            if (!receiveTask.Wait(HiConst.UdpTimeout)) return false;
+                var responseData = receiveTask.Result.Buffer;
+                var responseString = Encoding.ASCII.GetString(responseData);
 
-            var responseData = receiveTask.Result.Buffer;
-            var responseString = Encoding.ASCII.GetString(responseData);
+                if (responseString != name) return false;
 
-            if (responseString != name) return false;
+                _serverEndPointUdp = receiveTask.Result.RemoteEndPoint;
+                _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, _serverEndPointUdp.Port + 1);
 
-            _serverEndPointUdp = receiveTask.Result.RemoteEndPoint;
-            _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, _serverEndPointUdp.Port + 1);
+                //==============
+                _tcp = new TcpClient();
+                _tcp.Client.NoDelay = true;
+                _tcp.Client.SendTimeout = HiConst.SendTimeout;
+                _tcp.Connect(_serverEndPointTcp);
+                if (!_tcp.Connected) return false;
 
-            //==============
-            _tcp = new TcpClient();
-            _tcp.Client.NoDelay = true;
-            _tcp.Client.SendTimeout = HiConst.SendTimeout;
-            _tcp.Connect(_serverEndPointTcp);
-            if (!_tcp.Connected) return false;
+                StartThread(() => ListenTcpStreams(_tcp));
+                //===============
 
-            StartThread(() => ListenTcpStreams(_tcp));
-            //===============
-
-            IsConnected = true;
-            return true;
+                IsConnected = true;
+                return true;
+            }
+            finally
+            {
+                udp.Close();
+                udp.Dispose();
+                udp = null;
+            }
         }
     }
 }

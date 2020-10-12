@@ -1,5 +1,6 @@
 ﻿using Hi;
 using System;
+using System.Diagnostics;
 
 namespace HiServerApp
 {
@@ -7,6 +8,10 @@ namespace HiServerApp
     {
         static void Main(string[] args)
         {
+            var title = "PID:" + Process.GetCurrentProcess().Id;
+            Console.WriteLine(title);
+            Console.Title = title;
+            
             var app = new App();
             app.Start();
             while(!(Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.Escape))

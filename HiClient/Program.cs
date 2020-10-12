@@ -10,6 +10,10 @@ namespace HiClientApp
     {
         static void Main(string[] args)
         {
+            var title = "PID:" + Process.GetCurrentProcess().Id;
+            Console.WriteLine(title);
+            Console.Title = title;
+            
             Start();
             
             while(!(Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.Escape))
