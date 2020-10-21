@@ -15,7 +15,7 @@ namespace Hi
         private string      _name;
         private IPEndPoint  _udpEndpoint;
 
-        public HiServer() : base(Side.Server) { }
+        public HiServer() : base(Side.Server) {}
 
         public void Open(string name)
         {
@@ -31,20 +31,27 @@ namespace Hi
             var clientEndPoint = new IPEndPoint(IPAddress.Any, port);
             _udp = new UdpClient(_udpEndpoint);
 
-            while (true)
+            while(true)
             {
+                if(Stopped) return;
+
                 try
                 {
                     byte[] bytes = _udp.Receive(ref clientEndPoint);
                     string password = Encoding.ASCII.GetString(bytes);
 
-                    if (password == _name)
+                    if(password == _name)
                     {
                         var responseData = Encoding.ASCII.GetBytes(password);
                         _udp.Send(responseData, responseData.Length, clientEndPoint);
                     }
                 }
-                catch (Exception exception)
+                catch(SocketException e) when(e.SocketErrorCode == SocketError.Interrupted)
+                {
+                    Log?.Invoke("Udp closed");
+                    return;
+                }
+                catch(Exception exception)
                 {
                     Log?.Invoke(exception.ToString());
                     _udp.Dispose();
@@ -61,13 +68,42 @@ namespace Hi
             _tcp.Server.SendTimeout = HiConst.SendTimeout;
             _tcp.Start();
 
-            while (true)
+            while(true)
             {
-                TcpClient client = _tcp.AcceptTcpClient();
-                Log?.Invoke("Client connected");
-                IsConnected = true;
-                ListenTcpStreams(client);
+                if(Stopped) return;
+
+                try
+                {
+                    TcpClient client = _tcp.AcceptTcpClient();
+                    Log?.Invoke("Client connected");
+                    IsConnected = true;
+                    ListenTcpStreams(client);
+                }
+                catch(SocketException e) when(e.SocketErrorCode == SocketError.Interrupted)
+                {
+                    Log?.Invoke("Tcp closed");
+                    IsConnected = false;
+                }
+                catch(Exception exception)
+                {
+                    Log?.Invoke(exception.ToString());
+                    Close();
+                }
             }
+        }
+
+        public void Close()
+        {
+            AlertStop();
+
+            _udp.Close();
+            _udp.Dispose();
+            _udp = null;
+
+            _tcp.Stop();
+            _tcp = null;
+
+            Dispose();
         }
     }
 }

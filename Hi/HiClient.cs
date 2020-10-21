@@ -12,19 +12,23 @@ namespace Hi
     {
         private string _name;
 
-        public  Func<string, string> Receive;
-        private TcpClient            _tcp;
-        private IPEndPoint           _serverEndPointUdp;
-        private IPEndPoint           _serverEndPointTcp;
+        public Func<string, string> Receive;
 
-        public HiClient() : base(Side.Client) { }
+        private TcpClient  _tcp;
+        private IPEndPoint _serverEndPointUdp;
+        private IPEndPoint _serverEndPointTcp;
+
+        public HiClient() : base(Side.Client) {}
 
         public async void WatchLoop()
         {
-            while (true)
+            while(true)
             {
+                if(Stopped) return;
                 Thread.Sleep(HiConst.WatchPeriod);
-                if (_tcp == null || (!_tcp.Connected && !IsConnected))
+                if(Stopped) return;
+
+                if(_tcp == null || (!_tcp.Connected && !IsConnected))
                 {
                     await TryConnect();
                 }
@@ -45,19 +49,19 @@ namespace Hi
 
             var udp = new UdpClient {EnableBroadcast = true};
             var ip = new IPEndPoint(IPAddress.Broadcast, HiConst.UdpPort);
-            
+
             try
             {
                 byte[] bytes = Encoding.ASCII.GetBytes(name);
                 int size = await udp.SendAsync(bytes, bytes.Length, ip);
 
                 var receiveTask = udp.ReceiveAsync();
-                if (!receiveTask.Wait(HiConst.UdpTimeout)) return false;
+                if(!receiveTask.Wait(HiConst.UdpTimeout)) return false;
 
                 var responseData = receiveTask.Result.Buffer;
                 var responseString = Encoding.ASCII.GetString(responseData);
 
-                if (responseString != name) return false;
+                if(responseString != name) return false;
 
                 _serverEndPointUdp = receiveTask.Result.RemoteEndPoint;
                 _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, _serverEndPointUdp.Port + 1);
@@ -67,7 +71,7 @@ namespace Hi
                 _tcp.Client.NoDelay = true;
                 _tcp.Client.SendTimeout = HiConst.SendTimeout;
                 _tcp.Connect(_serverEndPointTcp);
-                if (!_tcp.Connected) return false;
+                if(!_tcp.Connected) return false;
 
                 StartThread(() => ListenTcpStreams(_tcp));
                 //===============
@@ -81,6 +85,17 @@ namespace Hi
                 udp.Dispose();
                 udp = null;
             }
+        }
+
+        public void Disconnect()
+        {
+            AlertStop();
+            
+            _tcp.Close();
+            _tcp.Dispose();
+            _tcp = null;
+            
+            Dispose();
         }
     }
 }

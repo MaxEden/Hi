@@ -1,12 +1,13 @@
 ﻿using Hi;
 using System;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace HiServerApp
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             var title = "PID:" + Process.GetCurrentProcess().Id;
             Console.WriteLine(title);
@@ -16,7 +17,7 @@ namespace HiServerApp
             app.Start();
             while(!(Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.Escape))
             {
-                app.Update();
+                await app.Update();
             }
         }
 
@@ -46,7 +47,7 @@ namespace HiServerApp
             static  DateTimeOffset _lastTime;
             private HiServer       _server;
 
-            public async void Update()
+            public async Task Update()
             {
                 if(DateTimeOffset.Now - _lastTime > TimeSpan.FromSeconds(2))
                 {

@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,21 +17,25 @@ namespace Hi
 
         private readonly object _syncRoot = new object();
 
-        private readonly ConcurrentQueue<Request>           _msgs = new ConcurrentQueue<Request>();
-        private readonly ConcurrentDictionary<int, Request> _busy = new ConcurrentDictionary<int, Request>();
-        private readonly ConcurrentQueue<Request>           _done = new ConcurrentQueue<Request>();
+        private ConcurrentQueue<Request>           _msgs = new ConcurrentQueue<Request>();
+        private ConcurrentDictionary<int, Request> _busy = new ConcurrentDictionary<int, Request>();
+        private ConcurrentQueue<Request>           _done = new ConcurrentQueue<Request>();
 
         public Action<string>       Log;
         public Func<string, string> Receive;
         public bool                 IsConnected { get; protected set; }
 
+        private DateTimeOffset _lastHeartbeat;
+        private int            _heartbeatId = -5;
+
+        private ConcurrentBag<Thread> _threads = new ConcurrentBag<Thread>();
+
+        protected volatile bool Stopped;
+
         internal HiBase(Side side)
         {
             Side = side;
         }
-
-        private DateTimeOffset _lastHeartbeat;
-        private int            _heartbeatId = -5;
 
         private protected void ListenTcpStreams(TcpClient client)
         {
@@ -38,14 +43,17 @@ namespace Hi
             var stream = client.GetStream();
             try
             {
-                while (client.Connected)
+                while(client.Connected)
                 {
+                    if(Stopped) return;
                     Heartbeat();
 
                     bool wait = true;
-                    while (_msgs.TryDequeue(out var request))
+                    while(_msgs.TryDequeue(out var request))
                     {
-                        if (request.FromSide == Side) _busy.TryAdd(request.Id, request);
+                        if(Stopped) return;
+
+                        if(request.FromSide == Side) _busy.TryAdd(request.Id, request);
 
                         WriteInt(stream, (int)request.FromSide);
                         WriteInt(stream, request.Id);
@@ -56,19 +64,21 @@ namespace Hi
                         wait = false;
                     }
 
-                    while (stream.DataAvailable)
+                    while(stream.DataAvailable)
                     {
+                        if(Stopped) return;
+
                         var fromSide = (Side)ReadInt(stream);
                         int id = ReadInt(stream);
                         var data = ReadString(stream);
 
-                        if (id == _heartbeatId) continue;
+                        if(id == _heartbeatId) continue;
 
                         Log?.Invoke($"[{Side}] read {data}");
 
-                        if (fromSide == Side)
+                        if(fromSide == Side)
                         {
-                            if (_busy.TryRemove(id, out var request))
+                            if(_busy.TryRemove(id, out var request))
                             {
                                 Complete(request, data);
                             }
@@ -82,13 +92,15 @@ namespace Hi
                         wait = false;
                     }
 
-                    if (wait)
+                    if(wait)
                     {
+                        if(Stopped) return;
+
                         Thread.Sleep(HiConst.SendDelay);
                     }
                 }
             }
-            catch (Exception exception)
+            catch(Exception exception)
             {
                 Log?.Invoke(exception.ToString());
                 Log?.Invoke($"[{Side}] Tcp disconnected");
@@ -103,7 +115,7 @@ namespace Hi
 
         private void Heartbeat()
         {
-            if (DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
+            if(DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
             {
                 _lastHeartbeat = DateTimeOffset.Now;
                 //Log?.Invoke($"[{Side}] heartbeat sent");
@@ -113,18 +125,21 @@ namespace Hi
 
         protected void StartThread(Action action)
         {
-            ThreadPool.QueueUserWorkItem(p => action());
-            // var threadStart = new ThreadStart(action);
-            // var thread = new Thread(threadStart);
-            // thread.Start();
+            //ThreadPool.QueueUserWorkItem(p => action());
+            var threadStart = new ThreadStart(action);
+            var thread = new Thread(threadStart);
+            thread.Start();
+            _threads.Add(thread);
         }
 
-        public bool ManualMessagePull { get; set; }
+        public bool ManualMessagePolling { get; set; }
 
-        public void PullMessages()
+        public void PollMessages()
         {
-            while (_done.TryDequeue(out var request))
+            while(_done.TryDequeue(out var request))
             {
+                if(Stopped) return;
+
                 request.Continue();
             }
         }
@@ -133,7 +148,7 @@ namespace Hi
         {
             request.Complete(null, data);
 
-            if (ManualMessagePull)
+            if(ManualMessagePolling)
             {
                 _done.Enqueue(request);
             }
@@ -155,8 +170,8 @@ namespace Hi
         protected string ReadString(NetworkStream stream)
         {
             int bufferSize = ReadInt(stream);
-            if (bufferSize == -1) return null;
-            if (bufferSize == 0) return "";
+            if(bufferSize == -1) return null;
+            if(bufferSize == 0) return "";
 
             byte[] buffer = new byte[bufferSize];
             stream.Read(buffer, 0, buffer.Length);
@@ -172,13 +187,13 @@ namespace Hi
 
         protected void WriteString(NetworkStream stream, string str)
         {
-            if (str == null)
+            if(str == null)
             {
                 WriteInt(stream, -1);
                 return;
             }
 
-            if (str == "")
+            if(str == "")
             {
                 WriteInt(stream, 0);
                 return;
@@ -191,10 +206,10 @@ namespace Hi
 
         public async Task<ResponseData> Send(string msg)
         {
-            if (!IsConnected) return new ResponseData();
+            if(!IsConnected) return new ResponseData();
 
             Request request;
-            lock (_syncRoot)
+            lock(_syncRoot)
             {
                 unchecked
                 {
@@ -207,6 +222,29 @@ namespace Hi
 
             var result = await request;
             return result.Data;
+        }
+
+        protected void AlertStop()
+        {
+            Stopped = true;
+        }
+
+        protected void Dispose()
+        {
+            Thread.Sleep(100);
+            while(_threads.Count > 0)
+            {
+                _threads.TryTake(out var thread);
+                if(thread.IsAlive) thread.Join();
+            }
+
+            _threads = new ConcurrentBag<Thread>();
+
+            _msgs = new ConcurrentQueue<Request>();
+            _busy = new ConcurrentDictionary<int, Request>();
+            _done = new ConcurrentQueue<Request>();
+
+            _uk = 0;
         }
     }
 }
