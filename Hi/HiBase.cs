@@ -227,17 +227,17 @@ namespace Hi
         protected void AlertStop()
         {
             Stopped = true;
+            Thread.Sleep(100);
         }
 
         protected void Dispose()
         {
-            Thread.Sleep(100);
             while(_threads.Count > 0)
             {
                 _threads.TryTake(out var thread);
                 if(thread.IsAlive) thread.Join();
             }
-
+            
             _threads = new ConcurrentBag<Thread>();
 
             _msgs = new ConcurrentQueue<Request>();
