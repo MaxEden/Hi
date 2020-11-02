@@ -12,15 +12,13 @@ namespace Hi
     {
         private string _name;
 
-        public Func<string, string> Receive;
-
         private TcpClient  _tcp;
         private IPEndPoint _serverEndPointUdp;
         private IPEndPoint _serverEndPointTcp;
 
         public HiClient() : base(Side.Client) {}
 
-        public async void WatchLoop()
+        public void WatchLoop()
         {
             while(true)
             {
@@ -30,20 +28,20 @@ namespace Hi
 
                 if(_tcp == null || (!_tcp.Connected && !IsConnected))
                 {
-                    await TryConnect();
+                    TryConnect();
                 }
             }
         }
 
-        public async Task<bool> Connect(string name)
+        public bool Connect(string name)
         {
             _name = name;
-            var connected = await TryConnect();
+            var connected = TryConnect();
             StartThread(() => WatchLoop());
             return connected;
         }
 
-        public async Task<bool> TryConnect()
+        private bool TryConnect()
         {
             var name = _name;
 
@@ -53,16 +51,27 @@ namespace Hi
             try
             {
                 byte[] bytes = Encoding.ASCII.GetBytes(name);
-                int size = await udp.SendAsync(bytes, bytes.Length, ip);
+                var sendTask = udp.SendAsync(bytes, bytes.Length, ip);
+                //LogMsg("udp discovery sent");
+                if(!sendTask.Wait(HiConst.UdpTimeout))
+                {
+                    //LogMsg("udp send timeout");
+                    return false;
+                }
 
                 var receiveTask = udp.ReceiveAsync();
-                if(!receiveTask.Wait(HiConst.UdpTimeout)) return false;
+                if(!receiveTask.Wait(HiConst.UdpTimeout))
+                {
+                    //LogMsg("udp receive timeout");
+                    return false;
+                }
 
                 var responseData = receiveTask.Result.Buffer;
                 var responseString = Encoding.ASCII.GetString(responseData);
 
                 if(responseString != name) return false;
-
+                
+                LogMsg("discovery succeeded");
                 _serverEndPointUdp = receiveTask.Result.RemoteEndPoint;
                 _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, _serverEndPointUdp.Port + 1);
 

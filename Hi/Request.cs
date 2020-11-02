@@ -11,6 +11,7 @@ namespace Hi
         public Side         FromSide;
 
         private Action _continuation;
+        private bool   _hasContinuation;
 
         public bool IsCompleted => IsDone;
 
@@ -23,6 +24,7 @@ namespace Hi
 
         public void OnCompleted(Action continuation)
         {
+            _hasContinuation = true;
             _continuation = continuation;
         }
 
@@ -39,18 +41,18 @@ namespace Hi
         public void Complete(string error, string response)
         {
             if (IsDone) throw new InvalidOperationException("Already completed");
-
+            IsDone = true;
             Data.Error = error;
             Data.ResponseMsg = response;
-            IsDone = true;
         }
 
         public void Continue()
         {
-            if (_continuation == null) throw new InvalidOperationException("Already continued");
-
+            if(!_hasContinuation) return;
+            
             var tmp = _continuation;
             _continuation = null;
+            if(tmp == null) throw new InvalidOperationException("Already continued");
             tmp?.Invoke();
         }
     }

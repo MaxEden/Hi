@@ -39,21 +39,28 @@ namespace Hi
                 {
                     byte[] bytes = _udp.Receive(ref clientEndPoint);
                     string password = Encoding.ASCII.GetString(bytes);
+                    LogMsg("client discovery received: " + password);
 
                     if(password == _name)
                     {
                         var responseData = Encoding.ASCII.GetBytes(password);
+                        LogMsg("client discovery accepted");
                         _udp.Send(responseData, responseData.Length, clientEndPoint);
                     }
+                    else
+                    {
+                        LogMsg("client discovery denied");
+                    }
                 }
-                catch(SocketException e) when(e.SocketErrorCode == SocketError.Interrupted)
+                catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
                 {
-                    Log?.Invoke("Udp closed");
+                    LogMsg("Udp closed");
                     return;
                 }
                 catch(Exception exception)
                 {
-                    Log?.Invoke(exception.ToString());
+                    LogMsg(exception.ToString());
+                    LogMsg("Udp closed due to exception");
                     _udp.Dispose();
                     _udp = new UdpClient(_udpEndpoint);
                 }
@@ -75,18 +82,27 @@ namespace Hi
                 try
                 {
                     TcpClient client = _tcp.AcceptTcpClient();
-                    Log?.Invoke("Client connected");
+                    LogMsg("Client connected");
                     IsConnected = true;
                     ListenTcpStreams(client);
                 }
-                catch(SocketException e) when(e.SocketErrorCode == SocketError.Interrupted)
+                catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
                 {
-                    Log?.Invoke("Tcp closed");
+                    LogMsg("Tcp closed by client");
                     IsConnected = false;
+                }
+                catch(ThreadAbortException exception)
+                {
+                    LogMsg("Tcp aborted");
+                }
+                catch(ThreadInterruptedException exception)
+                {
+                    LogMsg("Tcp interrupted");
                 }
                 catch(Exception exception)
                 {
-                    Log?.Invoke(exception.ToString());
+                    LogMsg(exception.ToString());
+                    LogMsg("Tcp disconnected due to exception");
                     Close();
                 }
             }

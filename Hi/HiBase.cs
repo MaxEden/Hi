@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -39,6 +40,7 @@ namespace Hi
 
         private protected void ListenTcpStreams(TcpClient client)
         {
+            LogMsg("starting tcp");
             _lastHeartbeat = DateTimeOffset.Now;
             var stream = client.GetStream();
             try
@@ -59,7 +61,10 @@ namespace Hi
                         WriteInt(stream, request.Id);
                         WriteString(stream, request.Data.Msg);
 
-                        Log?.Invoke($"[{Side}] sent {request.Data.Msg}");
+                        if(_heartbeatId != request.Id)
+                        {
+                            LogMsg($"sent {request.Data.Msg}");
+                        }
 
                         wait = false;
                     }
@@ -74,19 +79,19 @@ namespace Hi
 
                         if(id == _heartbeatId) continue;
 
-                        Log?.Invoke($"[{Side}] read {data}");
+                        LogMsg($"read {data}");
 
                         if(fromSide == Side)
                         {
                             if(_busy.TryRemove(id, out var request))
                             {
-                                Complete(request, data);
+                                Complete(request, null, data);
                             }
                         }
                         else
                         {
                             var response = Receive?.Invoke(data);
-                            _msgs.Enqueue(new Request(response, id, fromSide));
+                            EnqueueMsg(new Request(response, id, fromSide));
                         }
 
                         wait = false;
@@ -95,22 +100,50 @@ namespace Hi
                     if(wait)
                     {
                         if(Stopped) return;
-
                         Thread.Sleep(HiConst.SendDelay);
                     }
                 }
             }
+            catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
+            {
+                LogMsg("Tcp disconnected");
+            }
+            catch(ThreadAbortException exception)
+            {
+                LogMsg("Tcp aborted");
+            }
+            catch(ThreadInterruptedException exception)
+            {
+                LogMsg("Tcp interrupted");
+            }
             catch(Exception exception)
             {
-                Log?.Invoke(exception.ToString());
-                Log?.Invoke($"[{Side}] Tcp disconnected");
+                LogMsg(exception.ToString());
+                LogMsg("Tcp disconnected due to exception");
             }
             finally
             {
                 stream.Close();
                 client.Close();
+                var canceled = _busy.ToList();
+                _busy.Clear();
+                foreach(var pair in canceled)
+                {
+                    Complete(pair.Value, "disconnected", null);
+                }
+
                 IsConnected = false;
             }
+        }
+
+        protected void LogMsg(string msg)
+        {
+            Log?.Invoke($"[{Side}] {msg}");
+        }
+
+        private void EnqueueMsg(Request request)
+        {
+            _msgs.Enqueue(request);
         }
 
         private void Heartbeat()
@@ -118,8 +151,7 @@ namespace Hi
             if(DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
             {
                 _lastHeartbeat = DateTimeOffset.Now;
-                //Log?.Invoke($"[{Side}] heartbeat sent");
-                _msgs.Enqueue(new Request(null, _heartbeatId, Side));
+                EnqueueMsg(new Request(null, _heartbeatId, Side));
             }
         }
 
@@ -144,9 +176,9 @@ namespace Hi
             }
         }
 
-        private void Complete(Request request, string data)
+        private void Complete(Request request, string error, string data)
         {
-            request.Complete(null, data);
+            request.Complete(error, data);
 
             if(ManualMessagePolling)
             {
@@ -217,7 +249,7 @@ namespace Hi
                 }
 
                 request = new Request(msg, _uk, Side);
-                _msgs.Enqueue(request);
+                EnqueueMsg(request);
             }
 
             var result = await request;
