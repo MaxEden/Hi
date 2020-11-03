@@ -21,6 +21,7 @@ namespace Hi
         private ConcurrentQueue<Request>           _msgs = new ConcurrentQueue<Request>();
         private ConcurrentDictionary<int, Request> _busy = new ConcurrentDictionary<int, Request>();
         private ConcurrentQueue<Request>           _done = new ConcurrentQueue<Request>();
+        private ConcurrentQueue<DelayedReply>      _repl = new ConcurrentQueue<DelayedReply>();
 
         public Action<string>       Log;
         public Func<string, string> Receive;
@@ -90,8 +91,7 @@ namespace Hi
                         }
                         else
                         {
-                            var response = Receive?.Invoke(data);
-                            EnqueueMsg(new Request(response, id, fromSide));
+                            ReceiveInvoke(data, id, fromSide);
                         }
 
                         wait = false;
@@ -136,6 +136,19 @@ namespace Hi
             }
         }
 
+        private void ReceiveInvoke(string data, int id, Side fromSide)
+        {
+            if(ManualMessagePolling)
+            {
+                _repl.Enqueue(new DelayedReply(data, id, fromSide));
+            }
+            else
+            {
+                var response = Receive?.Invoke(data);
+                EnqueueMsg(new Request(response, id, fromSide));
+            }
+        }
+
         protected void LogMsg(string msg)
         {
             Log?.Invoke($"[{Side}] {msg}");
@@ -173,6 +186,13 @@ namespace Hi
                 if(Stopped) return;
 
                 request.Continue();
+            }
+
+            while(_repl.TryDequeue(out var  reply))
+            {
+                if(Stopped) return;
+                var response = Receive?.Invoke(reply.Data);
+                EnqueueMsg(new Request(response, reply.Id, reply.FromSide));
             }
         }
 

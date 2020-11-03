@@ -57,6 +57,20 @@ namespace Hi
         }
     }
 
+    internal class DelayedReply
+    {
+        public readonly string Data;
+        public readonly int    Id;
+        public readonly Side   FromSide;
+
+        public DelayedReply(string data, int id, Side fromSide)
+        {
+            Data = data;
+            Id = id;
+            FromSide = fromSide;
+        }
+    }
+
     internal enum Side
     {
         Server,
