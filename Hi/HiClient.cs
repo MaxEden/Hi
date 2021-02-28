@@ -46,7 +46,7 @@ namespace Hi
             var name = _name;
 
             var udp = new UdpClient {EnableBroadcast = true};
-            var ip = new IPEndPoint(IPAddress.Broadcast, HiConst.UdpPort);
+            var ip = new IPEndPoint(IPAddress.Broadcast, GetPort(name));
 
             try
             {
@@ -69,11 +69,15 @@ namespace Hi
                 var responseData = receiveTask.Result.Buffer;
                 var responseString = Encoding.ASCII.GetString(responseData);
 
-                if(responseString != name) return false;
+               
+                var split = responseString.Split(':');
+                if(split.Length < 2) return false;
+                if(split[0] != name) return false;
+                if(!Int32.TryParse(split[1], out int tcpPort)) return false;
                 
                 LogMsg("discovery succeeded");
                 _serverEndPointUdp = receiveTask.Result.RemoteEndPoint;
-                _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, _serverEndPointUdp.Port + 1);
+                _serverEndPointTcp = new IPEndPoint(_serverEndPointUdp.Address, tcpPort);
 
                 //==============
                 _tcp = new TcpClient();

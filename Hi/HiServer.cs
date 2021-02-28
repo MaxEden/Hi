@@ -14,6 +14,7 @@ namespace Hi
         private TcpListener _tcp;
         private string      _name;
         private IPEndPoint  _udpEndpoint;
+        private int         _tcpPort;
 
         public HiServer() : base(Side.Server) {}
 
@@ -21,8 +22,8 @@ namespace Hi
         {
             _name = name;
 
-            StartThread(() => ListenUdp(HiConst.UdpPort));
-            StartThread(() => ListenTcp(HiConst.UdpPort + 1));
+            StartThread(() => ListenUdp(GetPort(name)));
+            StartThread(() => ListenTcp(0));
         }
 
         void ListenUdp(int port)
@@ -38,12 +39,15 @@ namespace Hi
                 try
                 {
                     byte[] bytes = _udp.Receive(ref clientEndPoint);
+                    if(Stopped) return;
+                    if(_tcpPort == 0) return;
+                    
                     string password = Encoding.ASCII.GetString(bytes);
                     LogMsg("client discovery received: " + password);
 
                     if(password == _name)
                     {
-                        var responseData = Encoding.ASCII.GetBytes(password);
+                        var responseData = Encoding.ASCII.GetBytes(password+":"+ _tcpPort);
                         LogMsg("client discovery accepted");
                         _udp.Send(responseData, responseData.Length, clientEndPoint);
                     }
@@ -75,6 +79,8 @@ namespace Hi
             _tcp.Server.SendTimeout = HiConst.SendTimeout;
             _tcp.Start();
 
+            _tcpPort = ((IPEndPoint)_tcp.LocalEndpoint).Port;
+            
             while(true)
             {
                 if(Stopped) return;

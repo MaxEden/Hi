@@ -39,6 +39,14 @@ namespace Hi
             Side = side;
         }
 
+        protected int GetPort(string name)
+        {
+            int    hash   = name.GetHashCode();
+            ushort hash16 = (ushort) ((hash >> 16) ^ hash);
+            if(hash16 < 1024) hash16 += 1024;
+            return hash16;
+        }
+
         private protected void ListenTcpStreams(TcpClient client)
         {
             LogMsg("starting tcp");
