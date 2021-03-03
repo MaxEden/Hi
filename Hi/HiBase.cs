@@ -41,10 +41,29 @@ namespace Hi
 
         protected int GetPort(string name)
         {
-            int    hash   = name.GetHashCode();
-            ushort hash16 = (ushort) ((hash >> 16) ^ hash);
+            int    hash              = GetStableHashCode(name);
+            ushort hash16            = (ushort)((hash >> 16) ^ hash);
             if(hash16 < 1024) hash16 += 1024;
             return hash16;
+        }
+
+        private static int GetStableHashCode(string str)
+        {
+            unchecked
+            {
+                int hash1 = 5381;
+                int hash2 = hash1;
+
+                for(int i = 0; i < str.Length; i += 2)
+                {
+                    hash1 = ((hash1 << 5) + hash1) ^ str[i];
+                    if(i == str.Length - 1)
+                        break;
+                    hash2 = ((hash2 << 5) + hash2) ^ str[i + 1];
+                }
+
+                return hash1 + (hash2 * 1566083941);
+            }
         }
 
         private protected void ListenTcpStreams(TcpClient client)
@@ -83,8 +102,8 @@ namespace Hi
                         if(Stopped) return;
 
                         var fromSide = (Side)ReadInt(stream);
-                        int id = ReadInt(stream);
-                        var data = ReadString(stream);
+                        int id       = ReadInt(stream);
+                        var data     = ReadString(stream);
 
                         if(id == _heartbeatId) continue;
 
@@ -180,7 +199,7 @@ namespace Hi
         {
             //ThreadPool.QueueUserWorkItem(p => action());
             var threadStart = new ThreadStart(action);
-            var thread = new Thread(threadStart);
+            var thread      = new Thread(threadStart);
             thread.Start();
             _threads.Add(thread);
         }
@@ -196,7 +215,7 @@ namespace Hi
                 request.Continue();
             }
 
-            while(_repl.TryDequeue(out var  reply))
+            while(_repl.TryDequeue(out var reply))
             {
                 if(Stopped) return;
                 var response = Receive?.Invoke(reply.Data);
@@ -297,7 +316,7 @@ namespace Hi
                 _threads.TryTake(out var thread);
                 if(thread.IsAlive) thread.Join();
             }
-            
+
             _threads = new ConcurrentBag<Thread>();
 
             _msgs = new ConcurrentQueue<Request>();
