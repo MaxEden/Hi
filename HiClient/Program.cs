@@ -8,6 +8,8 @@ namespace HiClientApp
 {
     class Program
     {
+        private static HiClient _client;
+
         static void Main(string[] args)
         {
             var title = "PID:" + Process.GetCurrentProcess().Id;
@@ -19,6 +21,8 @@ namespace HiClientApp
             while(!(Console.KeyAvailable && Console.ReadKey().Key == ConsoleKey.Escape))
             {
                 Thread.Sleep(100);
+
+                _client.PollMessages();
             }
         }
 
@@ -26,25 +30,29 @@ namespace HiClientApp
         {
             Console.WriteLine("Hello World!");
             
-            var client = new HiClient();
-            client.Receive = Receive;
-            client.Log = s => {
+            _client = new HiClient();
+            _client.Receive = Receive;
+            _client.ManualMessagePolling = true;
+
+            _client.Log = s => {
                 Console.ForegroundColor = ConsoleColor.DarkCyan;
                 Console.WriteLine(s);
                 Console.ResetColor();
             };
             
-            var isConnected = await client.Connect("DrawBoard");
+            var isConnected = _client.Connect("DrawBoard");
 
             if (!isConnected)
             {
                 Console.WriteLine("Couldn't connect!");
                 return;
             }
-            await client.Send("hi server!");
+            await _client.Send("hi server!");
+
+            _client.SendBlocking("I SAID \"HI SERVER\"!");
         }
 
-        private static string Receive(string arg)
+        private static string Receive(string arg, Sender sender)
         {
             return "No you!" + arg;
         }

@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,14 +16,14 @@ namespace Hi
 
         private readonly object _syncRoot = new object();
 
-        private ConcurrentQueue<Request>           _msgs = new ConcurrentQueue<Request>();
-        private ConcurrentDictionary<int, Request> _busy = new ConcurrentDictionary<int, Request>();
-        private ConcurrentQueue<Request>           _done = new ConcurrentQueue<Request>();
-        private ConcurrentQueue<DelayedReply>      _repl = new ConcurrentQueue<DelayedReply>();
+        private ConcurrentQueue<Request>                 _msgs       = new();
+        private ConcurrentQueue<Request>                 _done       = new();
+        private ConcurrentQueue<DelayedReply>            _repl       = new();
+        private ConcurrentDictionary<int, TcpClientWrap> _tcpClients = new();
 
-        public Action<string>       Log;
-        public Func<string, string> Receive;
-        public bool                 IsConnected { get; protected set; }
+        public Action<string>               Log;
+        public Func<string, Sender, string> Receive;
+        public bool                         IsConnected { get; protected set; }
 
         private DateTimeOffset _lastHeartbeat;
         private int            _heartbeatId = -5;
@@ -41,8 +39,8 @@ namespace Hi
 
         protected int GetPort(string name)
         {
-            int    hash              = GetStableHashCode(name);
-            ushort hash16            = (ushort)((hash >> 16) ^ hash);
+            int hash = GetStableHashCode(name);
+            ushort hash16 = (ushort)((hash >> 16) ^ hash);
             if(hash16 < 1024) hash16 += 1024;
             return hash16;
         }
@@ -66,63 +64,102 @@ namespace Hi
             }
         }
 
-        private protected void ListenTcpStreams(TcpClient client)
+        protected void NewClient(TcpClient client)
+        {
+            lock(_syncRoot)
+            {
+                unchecked
+                {
+                    _uk++;
+                }
+
+                _tcpClients.TryAdd(_uk, new TcpClientWrap()
+                {
+                    Id = _uk,
+                    TcpClient = client,
+                    Sender = new Sender()
+                });
+            }
+
+            if(_tcpClients.Count == 1)
+            {
+                StartThread(() => ListenTcpStreams());
+            }
+        }
+
+        private void ListenTcpStreams()
         {
             LogMsg("starting tcp");
+
             _lastHeartbeat = DateTimeOffset.Now;
-            var stream = client.GetStream();
             try
             {
-                while(client.Connected)
+                while(!_tcpClients.IsEmpty)
                 {
                     if(Stopped) return;
                     Heartbeat();
 
                     bool wait = true;
+
+
                     while(_msgs.TryDequeue(out var request))
                     {
                         if(Stopped) return;
 
-                        if(request.FromSide == Side) _busy.TryAdd(request.Id, request);
-
-                        WriteInt(stream, (int)request.FromSide);
-                        WriteInt(stream, request.Id);
-                        WriteString(stream, request.Data.Msg);
-
-                        if(_heartbeatId != request.Id)
+                        foreach(var client in _tcpClients.Values)
                         {
-                            LogMsg($"sent {request.Data.Msg}");
-                        }
+                            if(!client.TcpClient.Connected) continue;
+                            if(request.Sender != null && request.Sender != client.Sender) continue;
 
-                        wait = false;
-                    }
+                            var stream = client.stream ??= client.TcpClient.GetStream();
+                            if(request.FromSide == Side) client._busy.TryAdd(request.Id, request);
 
-                    while(stream.DataAvailable)
-                    {
-                        if(Stopped) return;
+                            WriteInt(stream, (int)request.FromSide);
+                            WriteInt(stream, request.Id);
+                            WriteString(stream, request.Data.Msg);
 
-                        var fromSide = (Side)ReadInt(stream);
-                        int id       = ReadInt(stream);
-                        var data     = ReadString(stream);
-
-                        if(id == _heartbeatId) continue;
-
-                        LogMsg($"read {data}");
-
-                        if(fromSide == Side)
-                        {
-                            if(_busy.TryRemove(id, out var request))
+                            if(_heartbeatId != request.Id)
                             {
-                                Complete(request, null, data);
+                                LogMsg($"sent {request.Data.Msg}");
                             }
-                        }
-                        else
-                        {
-                            ReceiveInvoke(data, id, fromSide);
-                        }
 
-                        wait = false;
+                            wait = false;
+                        }
                     }
+
+                    foreach(var client in _tcpClients.Values)
+                    {
+                        if(!client.TcpClient.Connected) continue;
+                        var stream = client.stream ??= client.TcpClient.GetStream();
+
+                        while(stream.DataAvailable)
+                        {
+                            if(Stopped) return;
+
+                            var fromSide = (Side)ReadInt(stream);
+                            int id = ReadInt(stream);
+                            var data = ReadString(stream);
+
+                            if(id == _heartbeatId) continue;
+
+                            LogMsg($"read {data}");
+
+                            if(fromSide == Side)
+                            {
+                                if(client._busy.TryRemove(id, out var request))
+                                {
+                                    Complete(request, null, data);
+                                }
+                            }
+                            else
+                            {
+                                ReceiveInvoke(data, id, fromSide, client.Sender);
+                            }
+
+                            wait = false;
+                        }
+                    }
+
 
                     if(wait)
                     {
@@ -150,29 +187,33 @@ namespace Hi
             }
             finally
             {
-                stream.Close();
-                client.Close();
-                var canceled = _busy.ToList();
-                _busy.Clear();
-                foreach(var pair in canceled)
+                foreach(var clientWrap in _tcpClients.Values)
                 {
-                    Complete(pair.Value, "disconnected", null);
+                    clientWrap.stream.Close();
+                    clientWrap.TcpClient.Close();
+                    var canceled = clientWrap._busy.ToList();
+                    clientWrap._busy.Clear();
+                    foreach(var pair in canceled)
+                    {
+                        Complete(pair.Value, "disconnected", null);
+                    }
                 }
+
 
                 IsConnected = false;
             }
         }
 
-        private void ReceiveInvoke(string data, int id, Side fromSide)
+        private void ReceiveInvoke(string data, int id, Side fromSide, Sender sender)
         {
             if(ManualMessagePolling)
             {
-                _repl.Enqueue(new DelayedReply(data, id, fromSide));
+                _repl.Enqueue(new DelayedReply(data, id, fromSide, sender));
             }
             else
             {
-                var response = Receive?.Invoke(data);
-                EnqueueMsg(new Request(response, id, fromSide));
+                var response = Receive?.Invoke(data, sender);
+                EnqueueMsg(new Request(response, id, fromSide, sender));
             }
         }
 
@@ -191,7 +232,7 @@ namespace Hi
             if(DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
             {
                 _lastHeartbeat = DateTimeOffset.Now;
-                EnqueueMsg(new Request(null, _heartbeatId, Side));
+                EnqueueMsg(new Request(null, _heartbeatId, Side, null));
             }
         }
 
@@ -199,7 +240,7 @@ namespace Hi
         {
             //ThreadPool.QueueUserWorkItem(p => action());
             var threadStart = new ThreadStart(action);
-            var thread      = new Thread(threadStart);
+            var thread = new Thread(threadStart);
             thread.Start();
             _threads.Add(thread);
         }
@@ -218,8 +259,8 @@ namespace Hi
             while(_repl.TryDequeue(out var reply))
             {
                 if(Stopped) return;
-                var response = Receive?.Invoke(reply.Data);
-                EnqueueMsg(new Request(response, reply.Id, reply.FromSide));
+                var response = Receive?.Invoke(reply.Data, reply.Sender);
+                EnqueueMsg(new Request(response, reply.Id, reply.FromSide, reply.Sender));
             }
         }
 
@@ -227,7 +268,7 @@ namespace Hi
         {
             request.Complete(error, data);
 
-            if(ManualMessagePolling)
+            if(ManualMessagePolling && !request.Blocking)
             {
                 _done.Enqueue(request);
             }
@@ -283,7 +324,7 @@ namespace Hi
             stream.Write(buffer, 0, buffer.Length);
         }
 
-        public async Task<ResponseData> Send(string msg)
+        public async Task<ResponseData> Send(string msg, Sender sender = null)
         {
             if(!IsConnected) return new ResponseData();
 
@@ -295,12 +336,36 @@ namespace Hi
                     _uk++;
                 }
 
-                request = new Request(msg, _uk, Side);
+                request = new Request(msg, _uk, Side, sender);
                 EnqueueMsg(request);
             }
 
             var result = await request;
             return result.Data;
+        }
+
+        public ResponseData SendBlocking(string msg, Sender sender = null)
+        {
+            if(!IsConnected) return new ResponseData();
+
+            Request request;
+            lock(_syncRoot)
+            {
+                unchecked
+                {
+                    _uk++;
+                }
+
+                request = new Request(msg, _uk, Side, sender, true);
+                EnqueueMsg(request);
+            }
+
+            while(!request.IsDone)
+            {
+                Thread.Sleep(HiConst.SendDelay);
+            }
+
+            return request.Data;
         }
 
         protected void AlertStop()
@@ -317,13 +382,28 @@ namespace Hi
                 if(thread.IsAlive) thread.Join();
             }
 
+            _tcpClients.Clear();
             _threads = new ConcurrentBag<Thread>();
-
             _msgs = new ConcurrentQueue<Request>();
-            _busy = new ConcurrentDictionary<int, Request>();
             _done = new ConcurrentQueue<Request>();
-
             _uk = 0;
         }
+
+        private class TcpClientWrap
+        {
+            public TcpClient                          TcpClient;
+            public Sender                             Sender;
+            public int                                Id;
+            public NetworkStream                      stream;
+            public ConcurrentDictionary<int, Request> _busy = new();
+        }
+    }
+
+    public class Sender
+    {
+        public string                               Name    { get; internal set; }
+        public ConcurrentDictionary<string, object> DataBag { get; internal set; }
+
+        internal Sender() {}
     }
 }

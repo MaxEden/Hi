@@ -5,21 +5,26 @@ namespace Hi
 {
     internal class Request : INotifyCompletion
     {
-        public ResponseData Data;
-        public int          Id;
-        public bool         IsDone;
-        public Side         FromSide;
+        public          ResponseData Data;
+        public readonly int          Id;
+        public          bool         IsDone;
+        public readonly Side         FromSide;
+        public readonly Sender       Sender;
+        public readonly bool         Blocking;
 
         private Action _continuation;
         private bool   _hasContinuation;
 
+
         public bool IsCompleted => IsDone;
 
-        public Request(string msg, int id, Side fromSide)
+        public Request(string msg, int id, Side fromSide, Sender sender, bool blocking = false)
         {
             Data.Msg = msg;
             Id = id;
             FromSide = fromSide;
+            Sender = sender;
+            Blocking = blocking;
         }
 
         public void OnCompleted(Action continuation)
@@ -40,16 +45,18 @@ namespace Hi
 
         public void Complete(string error, string response)
         {
-            if (IsDone) throw new InvalidOperationException("Already completed");
-            IsDone = true;
+            if(IsDone) throw new InvalidOperationException("Already completed");
+
             Data.Error = error;
             Data.ResponseMsg = response;
+
+            IsDone = true;
         }
 
         public void Continue()
         {
             if(!_hasContinuation) return;
-            
+
             var tmp = _continuation;
             _continuation = null;
             if(tmp == null) throw new InvalidOperationException("Already continued");
@@ -62,12 +69,14 @@ namespace Hi
         public readonly string Data;
         public readonly int    Id;
         public readonly Side   FromSide;
+        public readonly Sender Sender;
 
-        public DelayedReply(string data, int id, Side fromSide)
+        public DelayedReply(string data, int id, Side fromSide, Sender sender)
         {
             Data = data;
             Id = id;
             FromSide = fromSide;
+            Sender = sender;
         }
     }
 

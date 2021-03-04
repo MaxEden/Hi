@@ -39,7 +39,7 @@ namespace HiServerApp
                 _server.Open("DrawBoard");
             }
 
-            public string Receive(string msg)
+            public string Receive(string msg, Sender sender)
             {
                 return "Ok, " + msg + ".";
             }

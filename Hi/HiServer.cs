@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Hi
 {
@@ -21,13 +19,13 @@ namespace Hi
         public void Open(string name)
         {
             _name = name;
-
             StartThread(() => ListenUdp(GetPort(name)));
             StartThread(() => ListenTcp(0));
         }
 
         void ListenUdp(int port)
         {
+            LogMsg("listen udp:" + port);
             _udpEndpoint = new IPEndPoint(IPAddress.Any, port);
             var clientEndPoint = new IPEndPoint(IPAddress.Any, port);
             _udp = new UdpClient(_udpEndpoint);
@@ -41,13 +39,13 @@ namespace Hi
                     byte[] bytes = _udp.Receive(ref clientEndPoint);
                     if(Stopped) return;
                     if(_tcpPort == 0) return;
-                    
+
                     string password = Encoding.ASCII.GetString(bytes);
                     LogMsg("client discovery received: " + password);
 
                     if(password == _name)
                     {
-                        var responseData = Encoding.ASCII.GetBytes(password+":"+ _tcpPort);
+                        var responseData = Encoding.ASCII.GetBytes(password + ":" + _tcpPort);
                         LogMsg("client discovery accepted");
                         _udp.Send(responseData, responseData.Length, clientEndPoint);
                     }
@@ -56,7 +54,8 @@ namespace Hi
                         LogMsg("client discovery denied");
                     }
                 }
-                catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
+                catch(Exception exception) when(exception is SocketException ||
+                                                exception.InnerException is SocketException)
                 {
                     LogMsg("Udp closed");
                     return;
@@ -73,6 +72,7 @@ namespace Hi
 
         void ListenTcp(int port)
         {
+            LogMsg("listen tcp");
             var clientEndPoint = new IPEndPoint(IPAddress.Any, port);
             _tcp = new TcpListener(clientEndPoint);
             _tcp.Server.NoDelay = true;
@@ -80,7 +80,8 @@ namespace Hi
             _tcp.Start();
 
             _tcpPort = ((IPEndPoint)_tcp.LocalEndpoint).Port;
-            
+            LogMsg("started tcp:" + _tcpPort);
+
             while(true)
             {
                 if(Stopped) return;
@@ -90,9 +91,10 @@ namespace Hi
                     TcpClient client = _tcp.AcceptTcpClient();
                     LogMsg("Client connected");
                     IsConnected = true;
-                    ListenTcpStreams(client);
+                    NewClient(client);
                 }
-                catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
+                catch(Exception exception) when(exception is SocketException ||
+                                                exception.InnerException is SocketException)
                 {
                     LogMsg("Tcp closed by client");
                     IsConnected = false;
@@ -113,6 +115,8 @@ namespace Hi
                 }
             }
         }
+
+
 
         public void Close()
         {
