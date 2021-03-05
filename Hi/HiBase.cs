@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Linq;
 using System.Net.Sockets;
 using System.Text;
@@ -324,7 +325,7 @@ namespace Hi
             stream.Write(buffer, 0, buffer.Length);
         }
 
-        public async Task<ResponseData> Send(string msg, Sender sender = null)
+        public async Task<ResponseData> Send(string msg, Sender sendTo = null)
         {
             if(!IsConnected) return new ResponseData();
 
@@ -336,7 +337,7 @@ namespace Hi
                     _uk++;
                 }
 
-                request = new Request(msg, _uk, Side, sender);
+                request = new Request(msg, _uk, Side, sendTo);
                 EnqueueMsg(request);
             }
 
@@ -344,7 +345,7 @@ namespace Hi
             return result.Data;
         }
 
-        public ResponseData SendBlocking(string msg, Sender sender = null)
+        public ResponseData SendBlocking(string msg, int timeout = 0, Sender sendTo = null)
         {
             if(!IsConnected) return new ResponseData();
 
@@ -356,15 +357,17 @@ namespace Hi
                     _uk++;
                 }
 
-                request = new Request(msg, _uk, Side, sender, true);
+                request = new Request(msg, _uk, Side, sendTo, true);
                 EnqueueMsg(request);
             }
 
+            if(timeout == 0) timeout = HiConst.SendBlockedTimeout;
+            var stopwatch = Stopwatch.StartNew();
             while(!request.IsDone)
             {
                 Thread.Sleep(HiConst.SendDelay);
+                if(stopwatch.ElapsedMilliseconds > timeout) return new ResponseData {Error = "timeout"};
             }
-
             return request.Data;
         }
 
