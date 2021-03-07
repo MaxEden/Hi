@@ -85,19 +85,19 @@ namespace Hi
             while(true)
             {
                 if(Stopped) return;
-
+                TcpClient client = null;
                 try
                 {
-                    TcpClient client = _tcp.AcceptTcpClient();
-                    LogMsg("Client connected");
+                    client = _tcp.AcceptTcpClient();
+
                     IsConnected = true;
-                    NewClient(client);
+                    NewClient(client, null);
                 }
                 catch(Exception exception) when(exception is SocketException ||
                                                 exception.InnerException is SocketException)
                 {
                     LogMsg("Tcp closed by client");
-                    IsConnected = false;
+                    RemoveClient(client);
                 }
                 catch(ThreadAbortException exception)
                 {
@@ -115,7 +115,6 @@ namespace Hi
                 }
             }
         }
-
 
 
         public void Close()

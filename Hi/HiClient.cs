@@ -46,15 +46,15 @@ namespace Hi
 
         private bool TryConnect()
         {
-            var name = _serviceName;
+            var serviceName = _serviceName;
 
             var udp = new UdpClient {EnableBroadcast = true};
-            var udpPort = GetPort(name);
+            var udpPort = GetPort(serviceName);
             var ip = new IPEndPoint(IPAddress.Broadcast, udpPort);
 
             try
             {
-                byte[] bytes = Encoding.ASCII.GetBytes(name);
+                byte[] bytes = Encoding.ASCII.GetBytes(serviceName);
                 LogMsg("connect udp:" + udpPort);
                 var sendTask = udp.SendAsync(bytes, bytes.Length, ip);
                 //LogMsg("udp discovery sent");
@@ -77,7 +77,7 @@ namespace Hi
 
                 var split = responseString.Split(':');
                 if(split.Length < 2) return false;
-                if(split[0] != name) return false;
+                if(split[0] != serviceName) return false;
                 if(!Int32.TryParse(split[1], out int tcpPort)) return false;
 
                 LogMsg("discovery succeeded");
@@ -91,8 +91,8 @@ namespace Hi
                 _tcp.Client.SendTimeout = HiConst.SendTimeout;
                 _tcp.Connect(_serverEndPointTcp);
                 if(!_tcp.Connected) return false;
-
-                NewClient(_tcp);
+                
+                NewClient(_tcp, _name);
                 //===============
 
                 IsConnected = true;

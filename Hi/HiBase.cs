@@ -33,6 +33,8 @@ namespace Hi
 
         protected volatile bool Stopped;
 
+        private volatile Thread _tcpThread;
+
         internal HiBase(Side side)
         {
             Side = side;
@@ -65,7 +67,7 @@ namespace Hi
             }
         }
 
-        protected void NewClient(TcpClient client)
+        protected void NewClient(TcpClient client, string name)
         {
             lock(_syncRoot)
             {
@@ -74,93 +76,124 @@ namespace Hi
                     _uk++;
                 }
 
-                _tcpClients.TryAdd(_uk, new TcpClientWrap()
+                var wrap = new TcpClientWrap()
                 {
                     Id = _uk,
                     TcpClient = client,
                     Sender = new Sender()
-                });
+                    {
+                        DataBag = new ConcurrentDictionary<string, object>()
+                    }
+                };
+
+                if(Side == Side.Client)
+                {
+                    wrap.Stream = wrap.TcpClient.GetStream();
+                    WriteString(wrap.Stream, name);
+                    wrap.Sender.Name = name;
+                    Log("connected to server");
+                }
+
+                if(Side == Side.Server)
+                {
+                    wrap.Stream = wrap.TcpClient.GetStream();
+                    name = ReadString(wrap.Stream);
+                    wrap.Sender.Name = name;
+                    LogMsg("Client connected: " + name);
+                }
+
+                _tcpClients.TryAdd(_uk, wrap);
             }
 
-            if(_tcpClients.Count == 1)
+            if(_tcpThread == null || !_tcpThread.IsAlive)
             {
-                StartThread(() => ListenTcpStreams());
+                _tcpThread = StartThread(() => ListenTcpStreams());
+            }
+        }
+
+        protected void RemoveClient(TcpClient client)
+        {
+            lock(_syncRoot)
+            {
+                var wrap = _tcpClients.Values.FirstOrDefault(p => p.TcpClient == client);
+                if(wrap != null)
+                {
+                    _tcpClients.TryRemove(wrap.Id, out _);
+                    wrap.Stream.Dispose();
+                    //wrap.TcpClient.Close();
+                    wrap.TcpClient.Dispose();
+
+                    LogMsg($"Client {wrap.Sender.Name} disconnected");
+
+                    if(_tcpClients.IsEmpty)
+                    {
+                        IsConnected = false;
+                    }
+                }
             }
         }
 
         private void ListenTcpStreams()
         {
-            LogMsg("starting tcp");
+            LogMsg("- starting tcp");
 
             _lastHeartbeat = DateTimeOffset.Now;
             try
             {
-                while(!_tcpClients.IsEmpty)
+                while(true)
                 {
                     if(Stopped) return;
-                    Heartbeat();
-
                     bool wait = true;
 
-
-                    while(_msgs.TryDequeue(out var request))
+                    if(!_tcpClients.IsEmpty)
                     {
-                        if(Stopped) return;
+                        Heartbeat();
+
+                        while(_msgs.TryDequeue(out var request))
+                        {
+                            if(Stopped) return;
+
+                            foreach(var client in _tcpClients.Values)
+                            {
+                                if(!SendToClient(client, request)) continue;
+
+                                LogMsg($"sent {request.Data.Msg}");
+                                wait = false;
+                            }
+                        }
 
                         foreach(var client in _tcpClients.Values)
                         {
                             if(!client.TcpClient.Connected) continue;
-                            if(request.Sender != null && request.Sender != client.Sender) continue;
-
-                            var stream = client.stream ??= client.TcpClient.GetStream();
-                            if(request.FromSide == Side) client._busy.TryAdd(request.Id, request);
-
-                            WriteInt(stream, (int)request.FromSide);
-                            WriteInt(stream, request.Id);
-                            WriteString(stream, request.Data.Msg);
-
-                            if(_heartbeatId != request.Id)
+                            var stream = client.Stream;
+                            while(stream.DataAvailable)
                             {
-                                LogMsg($"sent {request.Data.Msg}");
-                            }
+                                if(Stopped) return;
 
-                            wait = false;
-                        }
-                    }
+                                var fromSide = (Side)ReadInt(stream);
+                                int id = ReadInt(stream);
+                                var data = ReadString(stream);
 
-                    foreach(var client in _tcpClients.Values)
-                    {
-                        if(!client.TcpClient.Connected) continue;
-                        var stream = client.stream ??= client.TcpClient.GetStream();
+                                if(id == _heartbeatId) continue;
 
-                        while(stream.DataAvailable)
-                        {
-                            if(Stopped) return;
+                                LogMsg($"read {data} from {client.Sender.Name}");
 
-                            var fromSide = (Side)ReadInt(stream);
-                            int id = ReadInt(stream);
-                            var data = ReadString(stream);
-
-                            if(id == _heartbeatId) continue;
-
-                            LogMsg($"read {data}");
-
-                            if(fromSide == Side)
-                            {
-                                if(client._busy.TryRemove(id, out var request))
+                                if(fromSide == Side)
                                 {
-                                    Complete(request, null, data);
+                                    if(client.Busy.TryRemove(id, out var request))
+                                    {
+                                        Complete(request, null, data);
+                                    }
                                 }
-                            }
-                            else
-                            {
-                                ReceiveInvoke(data, id, fromSide, client.Sender);
-                            }
+                                else
+                                {
+                                    ReceiveInvoke(data, id, fromSide, client.Sender);
+                                }
 
-                            wait = false;
+                                wait = false;
+                            }
                         }
                     }
-
 
                     if(wait)
                     {
@@ -169,7 +202,8 @@ namespace Hi
                     }
                 }
             }
-            catch(Exception exception) when(exception is SocketException || exception.InnerException is SocketException)
+            catch(Exception exception) when(exception is SocketException ||
+                                            exception.InnerException is SocketException)
             {
                 LogMsg("Tcp disconnected");
             }
@@ -190,19 +224,37 @@ namespace Hi
             {
                 foreach(var clientWrap in _tcpClients.Values)
                 {
-                    clientWrap.stream.Close();
-                    clientWrap.TcpClient.Close();
-                    var canceled = clientWrap._busy.ToList();
-                    clientWrap._busy.Clear();
-                    foreach(var pair in canceled)
+                    clientWrap.Stream?.Close();
+                    clientWrap.TcpClient?.Close();
+                    if(clientWrap.Busy != null)
                     {
-                        Complete(pair.Value, "disconnected", null);
+                        var canceled = clientWrap.Busy.ToList();
+                        clientWrap.Busy.Clear();
+                        foreach(var pair in canceled)
+                        {
+                            Complete(pair.Value, $"disconnected {clientWrap.Sender.Name}", null);
+                        }
                     }
                 }
 
-
+                LogMsg("- stopped tcp");
                 IsConnected = false;
+                _tcpThread = null;
             }
+        }
+
+        private bool SendToClient(TcpClientWrap client, Request request)
+        {
+            if(!client.TcpClient.Connected) return false;
+            if(request.Sender != null && request.Sender != client.Sender) return false;
+
+            var stream = client.Stream;
+            if(request.FromSide == Side) client.Busy.TryAdd(request.Id, request);
+
+            WriteInt(stream, (int)request.FromSide);
+            WriteInt(stream, request.Id);
+            WriteString(stream, request.Data.Msg);
+            return true;
         }
 
         private void ReceiveInvoke(string data, int id, Side fromSide, Sender sender)
@@ -233,17 +285,21 @@ namespace Hi
             if(DateTimeOffset.Now - _lastHeartbeat > TimeSpan.FromMilliseconds(HiConst.WatchPeriod))
             {
                 _lastHeartbeat = DateTimeOffset.Now;
-                EnqueueMsg(new Request(null, _heartbeatId, Side, null));
+                foreach(var client in _tcpClients.Values)
+                {
+                    SendToClient(client, new Request(null, _heartbeatId, Side, null));
+                }
             }
         }
 
-        protected void StartThread(Action action)
+        protected Thread StartThread(Action action)
         {
             //ThreadPool.QueueUserWorkItem(p => action());
             var threadStart = new ThreadStart(action);
             var thread = new Thread(threadStart);
             thread.Start();
             _threads.Add(thread);
+            return thread;
         }
 
         public bool ManualMessagePolling { get; set; }
@@ -329,17 +385,7 @@ namespace Hi
         {
             if(!IsConnected) return new ResponseData();
 
-            Request request;
-            lock(_syncRoot)
-            {
-                unchecked
-                {
-                    _uk++;
-                }
-
-                request = new Request(msg, _uk, Side, sendTo);
-                EnqueueMsg(request);
-            }
+            Request request = SendNew(msg, sendTo);
 
             var result = await request;
             return result.Data;
@@ -349,6 +395,21 @@ namespace Hi
         {
             if(!IsConnected) return new ResponseData();
 
+            var request = SendNew(msg, sendTo);
+
+            if(timeout == 0) timeout = HiConst.SendBlockedTimeout;
+            var stopwatch = Stopwatch.StartNew();
+            while(!request.IsDone)
+            {
+                Thread.Sleep(HiConst.SendDelay);
+                if(stopwatch.ElapsedMilliseconds > timeout) return new ResponseData {Error = "timeout"};
+            }
+
+            return request.Data;
+        }
+
+        private Request SendNew(string msg, Sender sendTo)
+        {
             Request request;
             lock(_syncRoot)
             {
@@ -361,14 +422,7 @@ namespace Hi
                 EnqueueMsg(request);
             }
 
-            if(timeout == 0) timeout = HiConst.SendBlockedTimeout;
-            var stopwatch = Stopwatch.StartNew();
-            while(!request.IsDone)
-            {
-                Thread.Sleep(HiConst.SendDelay);
-                if(stopwatch.ElapsedMilliseconds > timeout) return new ResponseData {Error = "timeout"};
-            }
-            return request.Data;
+            return request;
         }
 
         protected void AlertStop()
@@ -394,11 +448,12 @@ namespace Hi
 
         private class TcpClientWrap
         {
-            public TcpClient                          TcpClient;
-            public Sender                             Sender;
-            public int                                Id;
-            public NetworkStream                      stream;
-            public ConcurrentDictionary<int, Request> _busy = new();
+            public TcpClient     TcpClient;
+            public Sender        Sender;
+            public int           Id;
+            public NetworkStream Stream;
+
+            public readonly ConcurrentDictionary<int, Request> Busy = new();
         }
     }
 
