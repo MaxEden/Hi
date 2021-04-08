@@ -33,7 +33,9 @@ namespace Hi
 
         protected volatile bool Stopped;
 
-        private volatile Thread _tcpThread;
+        private volatile Thread           _tcpThread;
+        private volatile AutoResetEvent   _tcpWaitHandle  = new AutoResetEvent(true);
+        private volatile ManualResetEvent _completeHandle = new ManualResetEvent(true);
 
         internal HiBase(Side side)
         {
@@ -166,6 +168,7 @@ namespace Hi
                         {
                             if(!client.TcpClient.Connected) continue;
                             var stream = client.Stream;
+                            
                             while(stream.DataAvailable)
                             {
                                 if(Stopped) return;
@@ -198,7 +201,7 @@ namespace Hi
                     if(wait)
                     {
                         if(Stopped) return;
-                        Thread.Sleep(HiConst.SendDelay);
+                        _tcpWaitHandle.WaitOne(HiConst.SendDelay);
                     }
                 }
             }
@@ -278,6 +281,7 @@ namespace Hi
         private void EnqueueMsg(Request request)
         {
             _msgs.Enqueue(request);
+            _tcpWaitHandle.Set();
         }
 
         private void Heartbeat()
@@ -334,6 +338,9 @@ namespace Hi
                 var thread = new Thread(() => request.Continue());
                 thread.Start();
             }
+
+            _completeHandle.Set();
+            _completeHandle.Reset();
         }
 
         protected int ReadInt(NetworkStream stream)
@@ -401,8 +408,8 @@ namespace Hi
             var stopwatch = Stopwatch.StartNew();
             while(!request.IsDone)
             {
-                Thread.Sleep(HiConst.SendDelay);
-                if(stopwatch.ElapsedMilliseconds > timeout) return new ResponseData {Error = "timeout"};
+                _completeHandle.WaitOne(timeout);
+                if(stopwatch.ElapsedMilliseconds >= timeout) return new ResponseData {Error = "timeout"};
             }
 
             return request.Data;
@@ -428,6 +435,7 @@ namespace Hi
         protected void AlertStop()
         {
             Stopped = true;
+            _tcpWaitHandle.Set();
             Thread.Sleep(100);
         }
 

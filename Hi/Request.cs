@@ -7,7 +7,7 @@ namespace Hi
     {
         public          ResponseData Data;
         public readonly int          Id;
-        public          bool         IsDone;
+        public volatile bool         IsDone;
         public readonly Side         FromSide;
         public readonly Sender       Sender;
         public readonly bool         Blocking;

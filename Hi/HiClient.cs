@@ -55,7 +55,7 @@ namespace Hi
             try
             {
                 byte[] bytes = Encoding.ASCII.GetBytes(serviceName);
-                LogMsg("connect udp:" + udpPort);
+                //LogMsg("connect udp:" + udpPort);
                 var sendTask = udp.SendAsync(bytes, bytes.Length, ip);
                 //LogMsg("udp discovery sent");
                 if(!sendTask.Wait(HiConst.UdpTimeout))
