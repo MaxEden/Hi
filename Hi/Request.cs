@@ -18,7 +18,7 @@ namespace Hi
 
         public bool IsCompleted => IsDone;
 
-        public Request(string msg, int id, Side fromSide, Sender sender, bool blocking = false)
+        public Request(Msg msg, int id, Side fromSide, Sender sender, bool blocking = false)
         {
             Data.Msg = msg;
             Id = id;
@@ -43,7 +43,7 @@ namespace Hi
             return this;
         }
 
-        public void Complete(string error, string response)
+        public void Complete(string error, Msg response)
         {
             if(IsDone) throw new InvalidOperationException("Already completed");
 
@@ -66,12 +66,12 @@ namespace Hi
 
     internal class DelayedReply
     {
-        public readonly string Data;
+        public readonly Msg Data;
         public readonly int    Id;
         public readonly Side   FromSide;
         public readonly Sender Sender;
 
-        public DelayedReply(string data, int id, Side fromSide, Sender sender)
+        public DelayedReply(Msg data, int id, Side fromSide, Sender sender)
         {
             Data = data;
             Id = id;
@@ -88,8 +88,8 @@ namespace Hi
 
     public struct ResponseData
     {
-        public string Msg;
-        public string ResponseMsg;
+        public Msg Msg;
+        public Msg ResponseMsg;
         public string Error;
     }
 }

@@ -49,10 +49,14 @@ namespace HiClientApp
             }
             await _client.Send("hi server!");
 
-            _client.SendBlocking("I SAID \"HI SERVER\"!");
+            _client.SendBlocking(new Msg{
+                
+                Text = "I SAID \"HI SERVER\"!",
+                Bytes = new byte[3] {1,2,3}
+            });
         }
 
-        private static string Receive(string arg, Sender sender)
+        private static Msg Receive(Msg arg, Sender sender)
         {
             return "No you!" + arg;
         }
