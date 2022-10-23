@@ -8,17 +8,21 @@ namespace Hi
 {
     public class HiServer : HiBase
     {
-        private UdpClient   _udp;
+        private UdpClient _udp;
         private TcpListener _tcp;
-        private string      _name;
-        private IPEndPoint  _udpEndpoint;
-        private int         _tcpPort;
+        private IPEndPoint _udpEndpoint;
+        private int _tcpPort;
 
-        public HiServer() : base(Side.Server) {}
+        public bool ManualClientConnection { get; set; }
+
+        public HiServer() : base(Side.Server)
+        {
+        }
 
         public void Open(string name)
         {
             _name = name;
+            LogMsg($"server at {GetLocalIPAddress()}");
             StartThread(() => ListenUdp(GetPort(name)));
             StartThread(() => ListenTcp(0));
         }
@@ -30,43 +34,57 @@ namespace Hi
             var clientEndPoint = new IPEndPoint(IPAddress.Any, port);
             _udp = new UdpClient(_udpEndpoint);
 
-            while(true)
+            while (true)
             {
-                if(Stopped) return;
+                if (Stopped) return;
 
                 try
                 {
                     byte[] bytes = _udp.Receive(ref clientEndPoint);
-                    if(Stopped) return;
-                    if(_tcpPort == 0) return;
-
+                    if (Stopped) return;
+                    if (_tcpPort == 0) return;
+                    
                     string password = Encoding.ASCII.GetString(bytes);
                     LogMsg("client discovery received: " + password);
-
-                    if(password == _name)
+                    
+                    if (!ManualClientConnection)
                     {
-                        var responseData = Encoding.ASCII.GetBytes(password + ":" + _tcpPort);
-                        LogMsg("client discovery accepted");
-                        _udp.Send(responseData, responseData.Length, clientEndPoint);
-                    }
-                    else
-                    {
-                        LogMsg("client discovery denied");
+                        if (password == _name)
+                        {
+                            var responseData = Encoding.ASCII.GetBytes(_name + ":" + _tcpPort);
+                            LogMsg($"client discovery accepted");
+                            _udp.Send(responseData, responseData.Length, clientEndPoint);
+                        }
+                        else
+                        {
+                            LogMsg("client discovery denied");
+                        }
                     }
                 }
-                catch(Exception exception) when(exception is SocketException ||
-                                                exception.InnerException is SocketException)
+                catch (Exception exception) when (exception is SocketException ||
+                                                  exception.InnerException is SocketException)
                 {
                     LogMsg("Udp closed");
                     return;
                 }
-                catch(Exception exception)
+                catch (Exception exception)
                 {
                     LogMsg(exception.ToString());
                     LogMsg("Udp closed due to exception");
                     _udp.Dispose();
                     _udp = new UdpClient(_udpEndpoint);
                 }
+            }
+        }
+
+        public void ForceSendResponse(string clientIp)
+        {
+            if (_udp != null && _tcpPort > 0)
+            {
+                var responseData = Encoding.ASCII.GetBytes(_name + ":" + _tcpPort);
+                LogMsg("client force connect attempt");
+                var clientEndPoint = new IPEndPoint(IPAddress.Parse(clientIp), GetPort(_name) + 1);
+                _udp.Send(responseData, responseData.Length, clientEndPoint);
             }
         }
 
@@ -82,32 +100,32 @@ namespace Hi
             _tcpPort = ((IPEndPoint)_tcp.LocalEndpoint).Port;
             LogMsg("started tcp:" + _tcpPort);
 
-            while(true)
+            while (true)
             {
-                if(Stopped) return;
+                if (Stopped) return;
                 TcpClient client = null;
                 try
                 {
                     client = _tcp.AcceptTcpClient();
 
                     IsConnected = true;
-                    NewClient(client, null);
+                    NewClient(client, null, _name);
                 }
-                catch(Exception exception) when(exception is SocketException ||
-                                                exception.InnerException is SocketException)
+                catch (Exception exception) when (exception is SocketException ||
+                                                  exception.InnerException is SocketException)
                 {
                     LogMsg("Tcp closed by client");
                     RemoveClient(client);
                 }
-                catch(ThreadAbortException exception)
+                catch (ThreadAbortException exception)
                 {
                     LogMsg("Tcp aborted");
                 }
-                catch(ThreadInterruptedException exception)
+                catch (ThreadInterruptedException exception)
                 {
                     LogMsg("Tcp interrupted");
                 }
-                catch(Exception exception)
+                catch (Exception exception)
                 {
                     LogMsg(exception.ToString());
                     LogMsg("Tcp disconnected due to exception");
@@ -121,12 +139,18 @@ namespace Hi
         {
             AlertStop();
 
-            _udp.Close();
-            _udp.Dispose();
-            _udp = null;
+            if (_udp != null)
+            {
+                _udp.Close();
+                _udp.Dispose();
+                _udp = null;
+            }
 
-            _tcp.Stop();
-            _tcp = null;
+            if (_tcp != null)
+            {
+                _tcp.Stop();
+                _tcp = null;
+            }
 
             Dispose();
         }

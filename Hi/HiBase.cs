@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -12,6 +13,8 @@ namespace Hi
     public abstract class HiBase
     {
         internal readonly Side Side;
+        
+        protected string _name;
 
         private int _uk;
 
@@ -69,7 +72,7 @@ namespace Hi
             }
         }
 
-        protected void NewClient(TcpClient client, string name)
+        protected void NewClient(TcpClient client, string clientName, string serverName)
         {
             lock (_syncRoot)
             {
@@ -91,17 +94,17 @@ namespace Hi
                 if (Side == Side.Client)
                 {
                     wrap.Stream = wrap.TcpClient.GetStream();
-                    Write.String(wrap.Stream, name);
-                    wrap.Sender.Name = name;
-                    Log("connected to server");
+                    Write.String(wrap.Stream, clientName);
+                    wrap.Sender.Name = serverName;
+                    Log("connected to server: " + serverName);
                 }
 
                 if (Side == Side.Server)
                 {
                     wrap.Stream = wrap.TcpClient.GetStream();
-                    name = Read.String(wrap.Stream);
-                    wrap.Sender.Name = name;
-                    LogMsg("Client connected: " + name);
+                    clientName = Read.String(wrap.Stream);
+                    wrap.Sender.Name = clientName;
+                    LogMsg("client connected: " + clientName);
                 }
 
                 _tcpClients.TryAdd(_uk, wrap);
@@ -282,7 +285,7 @@ namespace Hi
 
         protected void LogMsg(string msg)
         {
-            Log?.Invoke($"[{Side}] {msg}");
+            Log?.Invoke($"[{Side} : {_name}] {msg}");
         }
 
         private void EnqueueMsg(Request request)
@@ -355,7 +358,7 @@ namespace Hi
         {
             if (!IsConnected) return new ResponseData();
 
-            Request request = SendNew(msg, sendTo);
+            Request request = SendNew(msg, sendTo, false);
 
             var result = await request;
             return result.Data;
@@ -365,7 +368,7 @@ namespace Hi
         {
             if (!IsConnected) return new ResponseData();
 
-            var request = SendNew(msg, sendTo);
+            var request = SendNew(msg, sendTo, true);
 
             if (timeout == 0) timeout = HiConst.SendBlockedTimeout;
             var stopwatch = Stopwatch.StartNew();
@@ -378,7 +381,7 @@ namespace Hi
             return request.Data;
         }
 
-        private Request SendNew(Msg msg, Sender sendTo)
+        private Request SendNew(Msg msg, Sender sendTo, bool blocking)
         {
             Request request;
             lock (_syncRoot)
@@ -388,7 +391,7 @@ namespace Hi
                     _uk++;
                 }
 
-                request = new Request(msg, _uk, Side, sendTo, true);
+                request = new Request(msg, _uk, Side, sendTo, blocking);
                 EnqueueMsg(request);
             }
 
@@ -425,6 +428,20 @@ namespace Hi
             public NetworkStream Stream;
 
             public readonly ConcurrentDictionary<int, Request> Busy = new();
+        }
+        
+        public string GetLocalIPAddress()
+        {
+            var host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (var ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    return ip.ToString();
+                }
+            }
+
+            return string.Empty;
         }
     }
 
